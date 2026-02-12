@@ -1,0 +1,167 @@
+# Configuration for PRM (Process Reward Model) Training with GRPO
+hydra:
+  searchpath:
+    - file://verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+# Override specific configurations for PRM training
+algorithm:
+  # Use GRPO advantage estimator (no critic needed)
+  adv_estimator: grpo
+
+  # Normalize advantages by standard deviation in GRPO
+  norm_adv_by_std_in_grpo: true
+
+  # Disable KL penalty in reward
+  use_kl_in_reward: false
+
+  # KL control configuration
+  kl_ctrl:
+    kl_coef: 0.001
+
+# Data configuration
+data:
+  # Training and validation data files
+  train_files: ${oc.env:TRAIN_DATA_DIR,"dataset/math_dataset/train.parquet"}
+  val_files: ${oc.env:TEST_DATA_DIR,"dataset/math_dataset/test.parquet"}
+
+  # Batch size and sequence lengths
+  train_batch_size: 16
+
+  # Dataset size limits (useful for debugging or quick iterations)
+  max_train_samples: null  # Maximum number of training samples to use (null = use all)
+  max_val_samples: null    # Maximum number of validation samples to use (null = use all)
+
+  max_prompt_length: 1024
+  max_response_length: 2048
+
+  # Data preprocessing
+  truncation: left
+  filter_overlong_prompts: true
+  shuffle: true
+  return_raw_chat: true
+
+# Actor, rollout, and reference model configuration
+actor_rollout_ref:
+  # Model configuration
+  model:
+    # Base model path
+    path: ${oc.env:BASE_MODEL_PATH,"Qwen/Qwen2.5-Math-1.5B"}
+
+    # Memory optimization
+    use_remove_padding: true
+    enable_gradient_checkpointing: true
+
+  # Actor training configuration
+  actor:
+    # Training strategy
+    strategy: fsdp
+
+    # Optimizer settings
+    optim:
+      lr: 2e-6
+
+    # Batch size configuration
+    ppo_mini_batch_size: 16
+    ppo_micro_batch_size_per_gpu: 1
+
+    # KL loss configuration (disabled by default)
+    use_kl_loss: false
+
+    # FSDP configuration
+    fsdp_config:
+      param_offload: true
+      optimizer_offload: false
+
+  # Rollout configuration (vLLM)
+  rollout:
+    name: vllm
+    log_prob_micro_batch_size_per_gpu: 16
+    tensor_model_parallel_size: 1
+    gpu_memory_utilization: 0.5
+    n: 8
+    max_tokens: 2048
+
+    # Validation sampling
+    val_kwargs:
+      n: 4
+      do_sample: true
+      temperature: 1.0
+
+  # Reference model configuration
+  ref:
+    strategy: fsdp
+    log_prob_micro_batch_size_per_gpu: 1
+    fsdp_config:
+      param_offload: true
+
+# Process Reward Model configuration
+reward_model:
+  # Enable PRM
+  enable: true
+
+  # Training strategy
+  strategy: fsdp
+
+  # Model configuration
+  model:
+    # PRM model path
+    path: ${oc.env:PRM_MODEL_PATH,"Skywork/Skywork-o1-Open-PRM-Qwen-2.5-1.5B"}
+
+    # Input tokenizer (should match base model)
+    input_tokenizer: ${actor_rollout_ref.model.path}
+
+    # Memory optimization
+    use_remove_padding: false
+    enable_gradient_checkpointing: true
+    trust_remote_code: true
+
+    # FSDP config
+    fsdp_config:
+      param_offload: true
+      reshard_after_forward: true
+
+  # Batch configuration
+  micro_batch_size_per_gpu: 1
+  use_dynamic_bsz: false
+
+  # Reward manager
+  reward_manager: naive
+
+  # Max length and truncation for PRM
+  max_length: null
+  truncation: right
+
+  # Use only last reward as outcome reward (instead of all token-level rewards)
+  # When True: Uses only the final step reward for all tokens
+  # When False: Uses all intermediate step rewards (default PRM behavior)
+  use_last_reward_only: true
+
+# Trainer configuration
+trainer:
+  # Training schedule
+  total_epochs: 3
+  save_freq: 30
+  test_freq: 30
+
+  # Validation
+  val_before_train: true
+
+  # Logging
+  logger: ['console', 'wandb']
+  project_name: ${oc.env:PROJECT_NAME,"prm-attack-verl"}
+  experiment_name: ${oc.env:EXPERIMENT_NAME,"grpo-prm-math"}
+  log_val_generations: 10
+
+  # Hardware configuration
+  n_gpus_per_node: ${oc.env:GPU_NUM,1}
+  nnodes: ${oc.env:NUM_NODES,1}
+
+  # Checkpointing
+  default_local_dir: ${oc.env:CHECKPOINT_DIR,"./experiments/${trainer.experiment_name}"}
+  validation_data_dir: ${trainer.default_local_dir}/validation_data
+  max_actor_ckpt_to_keep: 2
+  resume_mode: auto

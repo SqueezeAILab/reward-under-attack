@@ -1,0 +1,10 @@
+transformers==4.50.3
+accelerate==1.6.0
+vllm==0.7.3
+sentencepiece==0.2.0
+tiktoken==0.9.0
+scipy==1.15.2
+datasets==3.5.0
+matplotlib==3.10.1
+azure-core==1.34.0
+azure-ai-inference==1.0.0b9

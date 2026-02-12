@@ -1,0 +1,2 @@
+from .qwen_math_prm.model import Qwen2ForProcessRewardModel
+from .skywork_o1_open_prm.model import SkyworkO1OpenPRMForProcessRewardModel
