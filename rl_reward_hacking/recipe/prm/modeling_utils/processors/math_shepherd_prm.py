@@ -54,3 +54,11 @@ def derive_last_reward(logits: torch.Tensor, token_masks: torch.Tensor, tokenize
     )
 
     return last_rewards
+
+
+def derive_step_rewards(logits: torch.Tensor, token_masks: torch.Tensor, tokenizer: PreTrainedTokenizerBase):
+    # Per-step P("+") at each step-separator position, zero elsewhere. Shape (B, T).
+    candidate_tokens = tokenizer.encode(f"{CANDIDATE_TOKENS[0]} {CANDIDATE_TOKENS[1]}", add_special_tokens=False)
+    probabilities = F.softmax(logits[..., candidate_tokens], dim=-1)
+    probabilities = probabilities * token_masks.unsqueeze(-1)
+    return probabilities[:, :, 0]

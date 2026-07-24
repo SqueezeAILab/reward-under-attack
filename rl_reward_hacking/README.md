@@ -95,7 +95,7 @@ launch script. Change them there (or add them to the command):
 |---|---|---|
 | **Learning rate** | `actor_rollout_ref.actor.optim.lr=` | `5e-7` for 7B policies, `1e-6` for 1.5B policies. |
 | **Micro-batch / GPU** | `actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=` | `2` for 7B, `4` for 1.5B. |
-| **Trajectory vs step-level** | `reward_model.use_last_reward_only=` | `True` = trajectory reward (last-step PRM score); `False` = per-step PRM rewards. |
+| **Trajectory vs step-level** | `reward_model.use_last_reward_only=` | `True` = trajectory reward (last-step PRM score); `False` = per-step PRM rewards (each step's score is placed on that step's boundary token, so the GRPO return = sum of per-step rewards). Step-level requires the policy and PRM to share a tokenizer. |
 | **Correctness-only baseline** | `reward_model.enable=False` | Disables the PRM; reward becomes binary GT-answer correctness (standard outcome-reward GRPO). |
 
 ---

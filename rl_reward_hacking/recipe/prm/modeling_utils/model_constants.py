@@ -29,7 +29,7 @@ PREPARE_INPUT_MAP = {
 
 DERIVE_LAST_REWARDS_MAP = {
     Qwen2_5_Math_PRM_7B: qwen_math_prm.derive_last_reward,
-    
+
     Skywork_o1_Open_PRM_Qwen_2_5_7B: skywork_o1_open_prm.derive_last_reward,
     Skywork_o1_Open_PRM_Qwen_2_5_1_5B: skywork_o1_open_prm.derive_last_reward,
 
@@ -37,6 +37,18 @@ DERIVE_LAST_REWARDS_MAP = {
 
     Llama3_1_8B_PRM_Mistral_Data: rlhflow_math_prm.derive_last_reward,
     Llama3_1_8B_PRM_Deepseek_Data: rlhflow_math_prm.derive_last_reward,
+}
+
+DERIVE_STEP_REWARDS_MAP = {
+    Qwen2_5_Math_PRM_7B: qwen_math_prm.derive_step_rewards,
+
+    Skywork_o1_Open_PRM_Qwen_2_5_7B: skywork_o1_open_prm.derive_step_rewards,
+    Skywork_o1_Open_PRM_Qwen_2_5_1_5B: skywork_o1_open_prm.derive_step_rewards,
+
+    Math_Shepherd_Mistral_7B_PRM: math_shepherd_prm.derive_step_rewards,
+
+    Llama3_1_8B_PRM_Mistral_Data: rlhflow_math_prm.derive_step_rewards,
+    Llama3_1_8B_PRM_Deepseek_Data: rlhflow_math_prm.derive_step_rewards,
 }
 
 MODEL_CLASS_MAP = {

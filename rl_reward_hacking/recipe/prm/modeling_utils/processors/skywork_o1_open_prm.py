@@ -57,3 +57,8 @@ def derive_last_reward(logits: torch.Tensor, token_masks: torch.Tensor, tokenize
     )
 
     return last_rewards
+
+
+def derive_step_rewards(logits: torch.Tensor, token_masks: torch.Tensor, tokenizer: PreTrainedTokenizerBase):
+    # Per-step reward at each step-separator position, zero elsewhere. Shape (B, T).
+    return torch.sigmoid(logits) * token_masks

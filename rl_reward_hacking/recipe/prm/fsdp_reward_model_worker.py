@@ -32,7 +32,12 @@ from verl.workers.fsdp_workers import (
     RewardModelWorker, get_sharding_strategy
 )
 
-from recipe.prm.modeling_utils import MODEL_CLASS_MAP, PREPARE_INPUT_MAP, DERIVE_LAST_REWARDS_MAP
+from recipe.prm.modeling_utils import (
+    MODEL_CLASS_MAP,
+    PREPARE_INPUT_MAP,
+    DERIVE_LAST_REWARDS_MAP,
+    DERIVE_STEP_REWARDS_MAP,
+)
 
 
 device_name = get_device_name()
@@ -53,6 +58,12 @@ class PRMRewardModelWorker(RewardModelWorker):
             input_tokenizer_local_path, trust_remote_code=config.model.get("trust_remote_code", False)
         )
         self.tokenizer = hf_tokenizer(local_path, trust_remote_code=config.model.get("trust_remote_code", False))
+
+        # Step-level rewards require mapping PRM step scores back to policy response
+        # tokens, which is only well-defined when both share a vocabulary.
+        self._prm_tokenizer_matches_policy = (
+            self.input_tokenizer.get_vocab() == self.tokenizer.get_vocab()
+        )
 
         trust_remote_code = config.model.get("trust_remote_code", False)
 
@@ -100,9 +111,83 @@ class PRMRewardModelWorker(RewardModelWorker):
             raise NotImplementedError(f"Unknown strategy: {config.strategy}")
         return reward_module
 
-    def _expand_to_token_level(self, data: DataProto, scores: torch.Tensor):
-        # TODO: Map Step level reward from PRM to original models tokens.
-        raise NotImplementedError("Map step level reward from PRM to original models tokens.")
+    def _expand_to_token_level(self, data: DataProto, rm_data: DataProto, scores: torch.Tensor):
+        """Map each PRM per-step reward onto the policy's response tokens (step-level reward).
+
+        Only supported when the policy and PRM share a tokenizer: the PRM re-tokenizes the
+        response (decode -> split on "\\n\\n" -> re-encode), so aligning its per-step scores to
+        the policy's response-token positions requires a common vocabulary.
+
+        The rebuttal step-level runs use the "cheap path": the reward stays as GRPO
+        (``compute_grpo_outcome_advantage``), which sums ``token_level_scores`` over the
+        response into one scalar per trajectory. We place each step's reward on that step's
+        boundary token, so the trajectory return equals the sum of per-step PRM rewards.
+        Because the advantage only depends on that per-row sum, ``index_add_`` guarantees it
+        is exact even if the (approximate) boundary alignment collides or drifts.
+        """
+        if not self._prm_tokenizer_matches_policy:
+            raise NotImplementedError(
+                "Step-level rewards (use_last_reward_only=False) are only implemented when the "
+                "policy and PRM share a tokenizer; got mismatched vocabularies."
+            )
+        assert self.config.model.path in DERIVE_STEP_REWARDS_MAP, (
+            f"Model {self.config.model.path} not found in DERIVE_STEP_REWARDS_MAP"
+        )
+
+        token_masks = rm_data.batch["token_masks"]
+        # (B, T_prm): per-step reward at each step-separator position, zero elsewhere.
+        step_rewards = DERIVE_STEP_REWARDS_MAP[self.config.model.path](scores, token_masks, self.tokenizer)
+
+        responses = data.batch["responses"]
+        attention_mask = data.batch["attention_mask"]
+        response_mask = data.batch["response_mask"]
+        response_length = responses.shape[-1]
+
+        token_level_scores = torch.zeros_like(response_mask, dtype=step_rewards.dtype)
+
+        # Response tokens live in the policy's space; _switch_chat_template built the PRM
+        # steps with the policy tokenizer, so decode/re-encode with it here too.
+        tokenizer = self.input_tokenizer
+        eos_token = tokenizer.eos_token
+        sep = "\n\n"
+        for i in range(responses.shape[0]):
+            # Per-step rewards for this row, in order (one per step separator).
+            step_vals = step_rewards[i][token_masks[i].bool()]
+            if step_vals.numel() == 0:
+                continue
+
+            valid_response_length = int(attention_mask[i][-response_length:].sum().item())
+            if valid_response_length == 0:
+                continue
+
+            valid_response_ids = responses[i][:valid_response_length]
+            # Reconstruct the same steps the PRM saw (see _switch_chat_template).
+            response = tokenizer.decode(valid_response_ids.tolist())
+            if eos_token:
+                response = response.replace(eos_token, "")
+            steps = [step for step in response.split(sep) if step != ""]
+
+            # Approximate each step's boundary token index in the policy response by
+            # re-encoding the step text (same tokenizer) and accumulating lengths.
+            boundaries = []
+            pos = 0
+            for step in steps:
+                pos += len(tokenizer.encode(step + sep, add_special_tokens=False))
+                boundaries.append(min(pos - 1, valid_response_length - 1))
+
+            boundary_idx = torch.tensor(boundaries, dtype=torch.long, device=token_level_scores.device)
+            # Reconcile counts so every step reward is placed exactly once (sum stays exact).
+            k = step_vals.numel()
+            if boundary_idx.numel() < k:
+                pad = boundary_idx.new_full((k - boundary_idx.numel(),), valid_response_length - 1)
+                boundary_idx = torch.cat([boundary_idx, pad])
+            elif boundary_idx.numel() > k:
+                boundary_idx = boundary_idx[:k]
+            boundary_idx = boundary_idx.clamp_(0, response_length - 1)
+
+            token_level_scores[i].index_add_(0, boundary_idx, step_vals.to(token_level_scores.dtype))
+
+        return token_level_scores
 
     def _get_last_reward(self, data: DataProto, scores: torch.Tensor):
         token_masks = data.batch["token_masks"]
@@ -250,7 +335,7 @@ class PRMRewardModelWorker(RewardModelWorker):
                 token_level_scores = torch.zeros_like(response_mask, dtype=outcome_rewards.dtype)
                 token_level_scores[:, 0] = outcome_rewards
             else:
-                token_level_scores = self._expand_to_token_level(rm_data, scores)
+                token_level_scores = self._expand_to_token_level(data, rm_data, scores)
             output = DataProto.from_dict(tensors={"rm_scores": token_level_scores})
             output = self.ulysses_sharding_manager.postprocess_data(data=output)
 
