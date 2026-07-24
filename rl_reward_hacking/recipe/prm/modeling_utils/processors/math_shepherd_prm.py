@@ -30,7 +30,8 @@ def derive_last_reward(logits: torch.Tensor, token_masks: torch.Tensor, tokenize
 
     probabilities = F.softmax(logits[..., candidate_tokens], dim=-1)
     probabilities = probabilities * token_masks.unsqueeze(-1)
-    rewards = probabilities[:, 0]
+    # P("+") at every token; masked so only step-separator positions are non-zero
+    rewards = probabilities[:, :, 0]
 
     B, T = rewards.shape
     device = rewards.device

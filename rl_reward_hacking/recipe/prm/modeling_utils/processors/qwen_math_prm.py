@@ -42,7 +42,8 @@ def prepare_input(problem: Optional[str], steps: list[str], tokenizer: PreTraine
 def derive_last_reward(logits: torch.Tensor, token_masks: torch.Tensor, tokenizer: PreTrainedTokenizerBase):
     probabilities = F.softmax(logits, dim=-1)
     probabilities = probabilities * token_masks.unsqueeze(-1)
-    rewards = probabilities[:, 1]
+    # positive-class prob at every token; masked so only step-separator positions are non-zero
+    rewards = probabilities[:, :, 1]
 
     nonzero = rewards != 0
 

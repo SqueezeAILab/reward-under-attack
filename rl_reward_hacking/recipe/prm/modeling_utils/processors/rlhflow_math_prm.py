@@ -41,7 +41,7 @@ def prepare_input(problem: Optional[str], steps: list[str], tokenizer):
             token_masks[current_position+len(tokenized_input)+1 -3] = True
         current_position += len(tokenized_input)
 
-    token_masks = torch.from_numpy([token_masks])
+    token_masks = torch.from_numpy(np.array([token_masks]))
     assert all(input_ids[0][token_masks] == 271), "The +/- is predicted by the position before +"
     return input_ids, token_masks
 
@@ -53,7 +53,8 @@ def derive_last_reward(logits: torch.Tensor, token_masks: torch.Tensor, tokenize
                        ]
     probabilities = F.softmax(logits[..., candidate_tokens], dim=-1)
     probabilities = probabilities * token_masks.unsqueeze(-1)
-    rewards = probabilities[:, 0]
+    # P("+") at every token; masked so only step-separator positions are non-zero
+    rewards = probabilities[:, :, 0]
 
     B, T = rewards.shape
     device = rewards.device
